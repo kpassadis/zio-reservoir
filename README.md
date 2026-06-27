@@ -33,3 +33,30 @@ There exists a very common analogy to explain the physics of fading memory. Imag
 
 If the canyon walls reflected sound perfectly without losing any energy, the echoes would never die down. A shout from three weeks ago would still be bouncing around at the exact same volume, creating a deafening wall of white noise that would completely drown out what you are saying right now.
 
+It turns out that it is possible to construct reservoir layers in practice that satisfy the Echo State property if we ensure that the weight matrix of the reservoir is scaled in such a way that the spectral radius is lower (or close to) than 1. The spectral radius is a crude measure of the memory retention of the reservoir. A small value means that the reservoir is forgetfull while a value closer to 1 means that the reservoir has a longer memory. As you might guess the spectral radius is a hyperparameter specified by the designer.
+
+If the spectral radius is larger than 1 then the reservoir will suffer from the most common disease of dynamic system: instability. Mathematicall the spectral radius is defined as:
+
+$$\rho(W_{res}) = \max_{i} \{|\lambda_i|\}$$
+
+where 
+
+Where $\lambda_1, \lambda_2, \dots, \lambda_n$ are the eigenvalues of $W_{res}$.
+
+Once the reservoir weights have been initialized they remain fixed. This means that to train the model it is only required to train a linear layer. This has tremendous advantages: it is very fast to train, can easily be used for classification or regression and we can even take advantage of the linear readout layer, for instance calculating statistical measures and prediction intervals.
+
+we can solve for the optimal output weights ($W_{out}$) globally and directly in a single step using Ridge Regression (also known as Tikhonov regularization).The optimization objective minimizes both the squared prediction errors and a penalty on the magnitude of the readout weights to prevent overfitting:$$\min_{W_{out}} \|X_{train}W_{out} - y_{train}\|_2^2 + \alpha\|W_{out}\|_2^2$$This formulation yields a unique, analytically perfect closed-form derivative known as the normal equation:$$W_{out} = (X_{train}^T X_{train} + \alpha I)^{-1} X_{train}^T y_{train}$$Where:$X_{train}$ is the matrix containing the captured high-dimensional reservoir states across the training timeline.$y_{train}$ is the vector of true target values.$\alpha$ is the regularization hyperparameter that penalizes extreme weights.$I$ is the identity matrix.In practical engineering applications, we skip computing the explicit matrix inverse ($(X_{train}^T X_{train} + \alpha I)^{-1}$), as it is prone to numerical instability when reservoir states are highly correlated. Instead, we use highly optimized linear solvers leveraging Cholesky or LU decomposition to find $W_{out}$ efficiently and stably.
+
+By anchoring the output to a regularized linear model, an Echo State Network inherits the transparent properties of classical statistics:
+- Instant Training and Re-training: There are no learning rates to tune or local minima to get trapped in. Training completes practically instantaneously—even for thousands of reservoir neurons—making it ideal for streaming data environments.
+- Direct Residual Analysis: Because the final mapping is linear, we can easily calculate the baseline residual variance ($\sigma^2$) of the training errors.
+- Expanding Prediction Horizons: This residual variance can be propagated analytically through the generative loop. As the model projects further into the future by feeding its own predictions back into itself, we can scale this variance dynamically ($h \cdot \sigma^2$) to map out expanding 5%–95% prediction intervals that naturally fan out over time.
+
+## The framework
+
+Now that we understand how Echo State Networks work we can focus on the underlying framework. Why do we need a framework in the first place? The architecture we described seems simple enough. Enter the world of **Deep Echo State Networks**.
+
+While a single "vanilla" reservoir is highly effective, it processes all temporal frequencies within a single, homogeneous pool of neurons. For highly complex sequences—like multi-scale load forecasting or chaotic financial markets—a single layer often struggles to isolate short-term volatility from long-term seasonal trends.
+
+## Reservoir computing use cases
+
