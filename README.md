@@ -45,7 +45,18 @@ Where $\lambda_1, \lambda_2, \dots, \lambda_n$ are the eigenvalues of $W_{res}$.
 
 Once the reservoir weights have been initialized they remain fixed. This means that to train the model it is only required to train a linear layer. This has tremendous advantages: it is very fast to train, can easily be used for classification or regression and we can even take advantage of the linear readout layer, for instance calculating statistical measures and prediction intervals.
 
-we can solve for the optimal output weights ($W_{out}$) globally and directly in a single step using Ridge Regression (also known as Tikhonov regularization).The optimization objective minimizes both the squared prediction errors and a penalty on the magnitude of the readout weights to prevent overfitting:$$\min_{W_{out}} \|X_{train}W_{out} - y_{train}\|_2^2 + \alpha\|W_{out}\|_2^2$$This formulation yields a unique, analytically perfect closed-form derivative known as the normal equation:$$W_{out} = (X_{train}^T X_{train} + \alpha I)^{-1} X_{train}^T y_{train}$$Where:$X_{train}$ is the matrix containing the captured high-dimensional reservoir states across the training timeline.$y_{train}$ is the vector of true target values.$\alpha$ is the regularization hyperparameter that penalizes extreme weights. $I$ is the identity matrix. In practical engineering applications, we skip computing the explicit matrix inverse ($(X_{train}^T X_{train} + \alpha I)^{-1}$), as it is prone to numerical instability when reservoir states are highly correlated. Instead, we use highly optimized linear solvers leveraging Cholesky or LU decomposition to find $W_{out}$ efficiently and stably.
+we can solve for the optimal output weights ($W_{out}$) globally and directly in a single step using Ridge Regression (also known as Tikhonov regularization).The optimization objective minimizes both the squared prediction errors and a penalty on the magnitude of the readout weights to prevent overfitting:
+$$\min_{W_{out}} \|X_{train}W_{out} - y_{train}\|_2^2 + \alpha\|W_{out}\|_2^2$$
+
+This formulation yields a unique, analytically perfect closed-form derivative known as the normal equation:
+$$W_{out} = (X_{train}^T X_{train} + \alpha I)^{-1} X_{train}^T y_{train}$$
+
+Where: $X_{train}$ is the matrix containing the captured high-dimensional reservoir states across the training timeline.
+$y_{train}$ is the vector of true target values.
+$\alpha$ is the regularization hyperparameter that penalizes extreme weights. 
+$I$ is the identity matrix. 
+
+In practical engineering applications, we skip computing the explicit matrix inverse ($(X_{train}^T X_{train} + \alpha I)^{-1}$), as it is prone to numerical instability when reservoir states are highly correlated. Instead, we use highly optimized linear solvers leveraging Cholesky or LU decomposition to find $W_{out}$ efficiently and stably.
 
 By anchoring the output to a regularized linear model, an Echo State Network inherits the transparent properties of classical statistics:
 - Instant Training and Re-training: There are no learning rates to tune or local minima to get trapped in. Training completes practically instantaneously—even for thousands of reservoir neurons—making it ideal for streaming data environments.
