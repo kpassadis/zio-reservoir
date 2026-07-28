@@ -20,7 +20,7 @@ Where:
 
 The process described above is known in Neural Network terminology as the feedforward step. A new input is pushed into a neural network model, this is propagated through its internal structure and an output is generated. The same idea applies to a reservoir model. What is different, however, is the learning process. In a Neural Network during training after the output has been produced it is typically compared to some target value, a loss is calculated and the error gradients are propagated backwards through the structure and the parameters get updated. This is not the case in reservoir models. Instead of running a computationally expensive optimization across the entire network, the learning process in Reservoir Computing is decoupled from the hidden layers.
 
-In Neural Networks built using reservoir layers (also known as **Echo State Networks**) the only trainable parameters are the weights of the readout layer. The reservoir layer consists of randomly generated weights which stay fixed.
+In Neural Networks built using reservoir layers (also known as **Echo State Networks**) the only trainable parameters are the weights of the readout layer. The reservoir layer is a random graph, and such a type of graph is typically modeled as an Erdos-Renyi random graph where each edge is included independently with a probability p. However, In reservoir computing the connection matrix consists of randomly generated weights which stay fixed rather than purely binary values. In fact, the reservoir layer is the core component of a reservoir computer and plays the same role as a hidden layer in a Neural Network. 
 
 Because of this unique setup, the training process avoids the standard backpropagation algorithm and its associated computational overhead. Instead, training an Echo State Network is equivalent to solving a linear regression problem. 
 At this point one may wonder: <i> why does this work? How is it possible to use randomly initialized stuff and still get meaningful predictions from the model?</i>
@@ -45,7 +45,7 @@ Where $\lambda_1, \lambda_2, \dots, \lambda_n$ are the eigenvalues of $W_{res}$.
 
 Once the reservoir weights have been initialized they remain fixed. This means that to train the model it is only required to train a linear layer. This has tremendous advantages: it is very fast to train, can easily be used for classification or regression and we can even take advantage of the linear readout layer, for instance calculating statistical measures and prediction intervals.
 
-we can solve for the optimal output weights ($W_{out}$) globally and directly in a single step using Ridge Regression (also known as Tikhonov regularization).The optimization objective minimizes both the squared prediction errors and a penalty on the magnitude of the readout weights to prevent overfitting:$$\min_{W_{out}} \|X_{train}W_{out} - y_{train}\|_2^2 + \alpha\|W_{out}\|_2^2$$This formulation yields a unique, analytically perfect closed-form derivative known as the normal equation:$$W_{out} = (X_{train}^T X_{train} + \alpha I)^{-1} X_{train}^T y_{train}$$Where:$X_{train}$ is the matrix containing the captured high-dimensional reservoir states across the training timeline.$y_{train}$ is the vector of true target values.$\alpha$ is the regularization hyperparameter that penalizes extreme weights.$I$ is the identity matrix.In practical engineering applications, we skip computing the explicit matrix inverse ($(X_{train}^T X_{train} + \alpha I)^{-1}$), as it is prone to numerical instability when reservoir states are highly correlated. Instead, we use highly optimized linear solvers leveraging Cholesky or LU decomposition to find $W_{out}$ efficiently and stably.
+we can solve for the optimal output weights ($W_{out}$) globally and directly in a single step using Ridge Regression (also known as Tikhonov regularization).The optimization objective minimizes both the squared prediction errors and a penalty on the magnitude of the readout weights to prevent overfitting:$$\min_{W_{out}} \|X_{train}W_{out} - y_{train}\|_2^2 + \alpha\|W_{out}\|_2^2$$This formulation yields a unique, analytically perfect closed-form derivative known as the normal equation:$$W_{out} = (X_{train}^T X_{train} + \alpha I)^{-1} X_{train}^T y_{train}$$Where:$X_{train}$ is the matrix containing the captured high-dimensional reservoir states across the training timeline.$y_{train}$ is the vector of true target values.$\alpha$ is the regularization hyperparameter that penalizes extreme weights. $I$ is the identity matrix. In practical engineering applications, we skip computing the explicit matrix inverse ($(X_{train}^T X_{train} + \alpha I)^{-1}$), as it is prone to numerical instability when reservoir states are highly correlated. Instead, we use highly optimized linear solvers leveraging Cholesky or LU decomposition to find $W_{out}$ efficiently and stably.
 
 By anchoring the output to a regularized linear model, an Echo State Network inherits the transparent properties of classical statistics:
 - Instant Training and Re-training: There are no learning rates to tune or local minima to get trapped in. Training completes practically instantaneously—even for thousands of reservoir neurons—making it ideal for streaming data environments.
@@ -56,7 +56,241 @@ By anchoring the output to a regularized linear model, an Echo State Network inh
 
 Now that we understand how Echo State Networks work we can focus on the underlying framework. Why do we need a framework in the first place? The architecture we described seems simple enough. Enter the world of **Deep Echo State Networks**.
 
-While a single "vanilla" reservoir is highly effective, it processes all temporal frequencies within a single, homogeneous pool of neurons. For highly complex sequences—like multi-scale load forecasting or chaotic financial markets—a single layer often struggles to isolate short-term volatility from long-term seasonal trends.
+While a single "vanilla" reservoir is highly effective, it processes all temporal frequencies within a single, homogeneous pool of neurons. For highly complex sequences—like multi-scale forecasting or chaotic financial markets a single layer often struggles to isolate short-term volatility from long-term seasonal trends. 
+
+zio-reservoir features:
+
+[ x ] Assemble structures using Logical Topology. 
+
+## The optimizer 
+
+There are two options for optimizing the weights of the readout layers: a closed-form solution (Ridge) and an iterative (Gradient Descent with Momentum). The closed form solution is faster and easier to tune but the iterative is more suitable for larger datasets. 
+
+> [!NOTE]
+> It is not required to implement a more sophisticated optimizer like ADAM or ADAGRAD since the optimization problem is convex and as such a stable algorithm will suffice to converge to a solution.
+
+[ x ] Optimize using Closed form solution (Ridge) or Iteratively (Gradient Descent).
+
 
 ## Reservoir computing use cases
 
+**Modelling Chatotic time series**: Among the most predominant applications of reservoir computing is prediction of chaotic dynamical systems. 
+
+> [!NOTE]
+> **Chaos is not randomness.** It is a strictly deterministic phenomenon. For chaos to emerge, a system must be both non-linear and dynamic (time-dependent). The defining hallmark of chaotic behavior is **sensitive dependence on initial conditions** — meaning even infinitesimally small differences in the starting state will ultimately lead to exponentially diverging trajectories (often referred to as the Butterfly Effect).
+
+## Reservoir model architectures
+
+<u> Deep ESN </u>
+
+```mermaid
+
+graph LR
+    subgraph DeepESN_Standard ["Deep ESN: No Dropout"]
+        direction LR
+        
+        IN1["Raw Signal<br/>(Input Layer)"]:::inputLayer
+        
+        R1A["Reservoir 1<br/>(Layer 1 Dynamics)"]:::resLayer
+        R1B["Reservoir 2<br/>(Layer 2 Dynamics)"]:::resLayer
+        R1N["Reservoir N<br/>(Layer N Dynamics)"]:::resLayer
+        
+        OUT1["Linear Readout<br/>(Final Forecast)"]:::readLayer
+        
+        IN1 --> R1A
+        R1A --> R1B
+        R1B -. "Sequential Fold" .-> R1N
+        R1N --> OUT1
+    end
+
+    subgraph DeepESN_Dropout ["Deep ESN: With Dropout"]
+        direction LR
+        
+        IN2["Raw Signal<br/>(Input Layer)"]:::inputLayer
+        
+        R2A["Reservoir 1<br/>(Layer 1 Dynamics)"]:::resLayer
+        D2A["Dropout<br/>(Seed: 42)"]:::dropLayer
+        
+        R2B["Reservoir 2<br/>(Layer 2 Dynamics)"]:::resLayer
+        D2B["Dropout<br/>(Seed: 43)"]:::dropLayer
+        
+        R2N["Reservoir N<br/>(Layer N Dynamics)"]:::resLayer
+        D2N["Dropout<br/>(Seed: 42+N)"]:::dropLayer
+        
+        OUT2["Linear Readout<br/>(Final Forecast)"]:::readLayer
+        
+        IN2 --> R2A
+        R2A --> D2A
+        D2A --> R2B
+        R2B --> D2B
+        D2B -. "Sequential Fold" .-> R2N
+        R2N --> D2N
+        D2N --> OUT2
+    end
+
+    %% Color Theme Definitions
+    classDef inputLayer fill:#e1f5fe,stroke:#0288d1,stroke-width:2px,color:#000;
+    classDef resLayer fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#000;
+    classDef readLayer fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000;
+    classDef dropLayer fill:#ffe0b2,stroke:#f57c00,stroke-width:2px,color:#000,stroke-dasharray: 5 5;
+
+```
+
+<u> ESN with a skip connection </u>
+
+```mermaid
+graph LR
+    subgraph AR-ESN [Auto-Regressive Skip-Connection]
+        direction LR
+        
+        IN["Raw Signal<br/>(1D)"]:::inputLayer
+        
+        %% The Linear Branch
+        ID["Identity Layer<br/>(1D)"]:::idLayer
+        
+        %% The Chaotic Branch
+        I1["Input Layer<br/>(1 → 100)"]:::inputLayer
+        R1["Reservoir Layer<br/>(State: 100)"]:::resLayer
+        
+        %% The Merge & Output
+        C1["Concat Layer<br/>(1 + 100 = 101)"]:::concatLayer
+        O1["Readout Layer<br/>(101 → 1)"]:::readLayer
+        
+        %% Routing
+        IN --> ID
+        IN --> I1
+        
+        I1 --> R1
+        R1 --> C1
+        ID -- "Linear Baseline" --> C1
+        
+        C1 --> O1
+    end
+
+    classDef inputLayer fill:#e1f5fe,stroke:#0288d1,stroke-width:2px,color:#000;
+    classDef resLayer fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#000;
+    classDef idLayer fill:#f3e5f5,stroke:#8e24aa,stroke-width:2px,color:#000;
+    classDef concatLayer fill:#eceff1,stroke:#546e7a,stroke-width:2px,color:#000;
+    classDef readLayer fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#000;
+```
+
+<u> Echo state forest </u>
+
+```mermaid
+graph LR
+    subgraph ForestESN [ForestESN Ensemble Architecture]
+        direction LR
+        
+        IN["Raw Signal<br/>(1D)"]:::inputLayer
+        
+        subgraph E1 [Vanilla ESN 1]
+            direction LR
+            I1["Input 1"]:::inputLayer --> R1["Reservoir 1"]:::resLayer --> O1["Readout 1"]:::readLayer
+        end
+        
+        subgraph E2 [Vanilla ESN 2]
+            direction LR
+            I2["Input 2"]:::inputLayer --> R2["Reservoir 2"]:::resLayer --> O2["Readout 2"]:::readLayer
+        end
+        
+        subgraph EN [Vanilla ESN N]
+            direction LR
+            IN_N["Input N"]:::inputLayer --> RN["Reservoir N"]:::resLayer --> ON_N["Readout N"]:::readLayer
+        end
+        
+        %% Input Splitting
+        IN --> I1
+        IN --> I2
+        IN -. "ZIO.foreachPar" .-> IN_N
+        
+        %% Aggregation (Fixed Naming!)
+        C1["ZIO Matrix Aggregation<br/>(DenseMatrix.horzcat)"]:::zioLayer
+        
+        O1 --> C1
+        O2 --> C1
+        ON_N -. "ZIO.attemptBlocking" .-> C1
+        
+        M1["Ensemble Mean<br/>(Final Forecast)"]:::readLayer
+        C1 --> M1
+    end
+
+    classDef inputLayer fill:#e1f5fe,stroke:#0288d1,stroke-width:2px,color:#000;
+    classDef resLayer fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#000;
+    classDef readLayer fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#000;
+    classDef zioLayer fill:#f3e5f5,stroke:#8e24aa,stroke-width:2px,color:#000;
+```
+
+🚀 Quick Start
+1. Building a Model
+
+Because rezervoir relies on literal types to prove shapes, you specify the dimensions explicitly in the type parameters: [In, Reservoir, Out].
+
+
+```scala
+import rezervoir.*
+import zio.*
+
+val program = for {
+    input     <- Input.typed[1, 100]
+    reservoir <- Reservoir.typed[100] 
+    readout   <- Readout.typed[100, 1]
+    input2 <- Input.typed[1, 10]
+    reservoir2 <- Reservoir.typed[10] 
+    readout2 <- Readout.typed[10,1]
+    model = input >>> reservoir >>> readout >>> input2 >>> reservoir2 >>> readout2
+    dataset <-  FullDataset.fromBatch(Dataset.airpassengers().toBatch(1))
+    tuple <- dataset.split(0.9)
+    (train, test) = tuple
+    optimizer = Ridge(1.0, washout = 40)
+    trainedModel <- optimizer.fit(model, 1, train)
+    preds = trainedModel.predict(test.dataset)
+} yield preds
+
+```
+
+2. Training Pipelines
+
+Optimizers are strictly typed to their required datasets. Closed-form analytic solvers require the full dataset in memory, while iterative streaming solvers handle batched streams.
+Ridge Regression (Closed-Form Analytical)
+
+```scala
+// Requires a FullDataset for native LAPACK matrix division
+val ridgeOptimizer = Ridge(alpha = 0.5, washout = 100)
+
+for {
+    model   <- VanillaESN.build[1, 400, 1]
+    dataset <- Dataset.loadFull("data/grid_load.csv")
+    _       <- model.fit(ridgeOptimizer, dataset)
+    preds   <- model.predict(dataset.dataset)
+} yield preds
+```
+
+Gradient Descent with Momentum & Clipping (Streaming)
+
+```scala
+// Requires a BatchedDataset. Tracks continuous time-series state safely across epochs.
+val sgdOptimizer = GradientDescent(
+    lr = 0.01, 
+    alpha = 0.001, 
+    totalWashout = 100, 
+    beta = 0.9 // Momentum
+)
+
+for {
+    model   <- SkipESN.build[1, 500, 1]
+    dataset <- Dataset.loadBatched("data/massive_timeline.csv", batchSize = 64)
+    _       <- model.fit(sgdOptimizer, dataset, nIter = 50)
+} yield ()
+```
+
+🗺️ Roadmap
+
+    [x] Vanilla, Skip, and Deep ESN Architectures
+
+    [x] Compile-time TypeAdd topological validation
+
+    [x] Moving Block Bootstrap ESN Forests
+
+    [x] Continuous Stateful Stream Optimizers (SGD + Momentum + Clipping)
+
+    [ ] ZIO-Json Model Serialization & Deserialization (In Progress)
