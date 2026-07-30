@@ -26,9 +26,9 @@ class ModelTests extends munit.FunSuite:
             dataset <- BatchedDataset.fromBatch(10, Dataset.airpassengers().toBatch(1))
             tuple <- dataset.split(0.9)
             (train, test) = tuple
-            model <- SkipESN.build[1, 500, 1]
-            descent = GradientDescent(0.001, 0.1, 50)
-            _ <- model.fit(descent, train, 2000)
+            model <- SkipESN.build[1, 200, 1]
+            descent = GradientDescent(0.001, 0.1, 0.9, 20)
+            _ <- model.fit(descent, train, 200)
             preds <- model.predict(test.dataset)
         } yield preds
 

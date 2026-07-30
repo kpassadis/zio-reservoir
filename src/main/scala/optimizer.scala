@@ -14,12 +14,6 @@ import zio.stream.*
 sealed trait Optimizer[D <: Dataset : Tag]:
     
     /**
-     * Executes a single training step (or a full closed-form solution, depending on the implementation)
-     * using the dataset provided via the ZIO environment.
-     */
-    protected def step[M <: Model[?, ?, ?, ?]](model: M, refOpt:Option[Ref[Int]]): ZIO[D, Nothing, M]
-    
-    /**
      * Executes the training loop for a specified number of iterations/epochs
      * using the dataset provided via the ZIO environment.
      */
@@ -32,15 +26,8 @@ sealed trait Optimizer[D <: Dataset : Tag]:
     def fit[M <: Model[?, ?, ?, ?]](model: M, nIter: Int, dataset: D): ZIO[Any, Nothing, M] = 
         val env = ZLayer.succeed(dataset)
         this.fit(model, nIter).provideLayer(env) 
-        
-    /**
-     * Convenience method to inject the dataset directly for a single training step.
-     */
-    protected def step[M <: Model[?, ?, ?, ?]](model: M, dataset: D, refOpt:Option[Ref[Int]]): ZIO[Any, Nothing, M] = 
-        val env = ZLayer.succeed(dataset)
-        this.step(model, refOpt).provideLayer(env)
 
-    
+
 /**
  * Ridge Regression (Tikhonov Regularization) Optimizer.
  * * This is the gold-standard solver for Echo State Networks. Because the Readout layer is purely linear, 
@@ -48,14 +35,12 @@ sealed trait Optimizer[D <: Dataset : Tag]:
  * native C/Fortran LAPACK routines (via Breeze's `\` operator).
  * * Ridge inherently requires the entire state matrix in memory at once, which is why it strictly 
  * bounds its dataset requirement to `FullDataset`.
- * * @param alpha   The L2 regularization penalty. Higher values prevent overfitting by shrinking Readout weights.
- * @param washout The number of initial time steps to discard before computing the loss. This is critical 
- * in Reservoir Computing to allow the chaotic reservoir to "warm up" and forget its 
- * initial state of zeros (Transient Phase).
+ * * @param alpha   The L2 regularization penalty. Higher values prevent overfitting.
+ * @param washout The number of initial time steps to discard before computing the loss.
  */
 class Ridge(val alpha: Double, val washout: Int = 100) extends Optimizer[FullDataset]:
-    
-    override def step[M <: Model[?, ?, ?, ?]](model: M, refOpt:Option[Ref[Int]]): ZIO[FullDataset, Nothing, M] = for {
+
+    private def performStep[M <: Model[?, ?, ?, ?]](model: M): ZIO[FullDataset, Nothing, M] = for {
         dataset  <- ZIO.service[FullDataset]
         cascade  = model.getCascade
         batchOpt <- dataset.next()
@@ -74,16 +59,16 @@ class Ridge(val alpha: Double, val washout: Int = 100) extends Optimizer[FullDat
                         case Sequential(layerA, readout: Readout[?,?]) =>
                             val z = layerA.forward(batch)
                             z match
-                                case Batch.Labeled(z, y) =>
+                                case Batch.Labeled(zMat, yMat) =>
                                     // Safely drop the transient warmup phase (Washout)
-                                    val safeWashout = math.min(washout, z.rows)
-                                    val zWashed = if safeWashout > 0 then z(safeWashout until z.rows, ::) else z
-                                    val yWashed = if safeWashout > 0 then y(safeWashout until y.rows, ::).copy else y
+                                    val safeWashout = math.min(washout, zMat.rows)
+                                    val zWashed = if safeWashout > 0 then zMat(safeWashout until zMat.rows, ::) else zMat
+                                    val yWashed = if safeWashout > 0 then yMat(safeWashout until yMat.rows, ::).copy else yMat
                                     
                                     // Append a bias column of 1.0s to the state matrix
                                     val zWithBias = DenseMatrix.horzcat(DenseMatrix.ones[Double](zWashed.rows, 1), zWashed)
                                     
-                                    // Construct the Identity matrix for L2 Regularization, keeping bias unpenalized (I(0,0) = 0)
+                                    // Construct the Identity matrix for L2 Regularization, keeping bias unpenalized
                                     val I = DenseMatrix.eye[Double](zWithBias.cols) * alpha
                                     I(0, 0) = 0.0
                                     
@@ -104,9 +89,10 @@ class Ridge(val alpha: Double, val washout: Int = 100) extends Optimizer[FullDat
 
     /**
      * Because Ridge regression is a closed-form analytical solver, it finds the global optimum 
-     * in a single step. Therefore, `fit` simply delegates to `step` and ignores `nIter`.
+     * in a single step. Therefore, `fit` simply executes once and ignores `nIter`.
      */
-    override def fit[M <: Model[?, ?, ?, ?]](model: M, nIter: Int = 1): ZIO[FullDataset, Nothing, M] = step(model, None)
+    override def fit[M <: Model[?, ?, ?, ?]](model: M, nIter: Int = 1): ZIO[FullDataset, Nothing, M] = 
+        performStep(model)
 
 
 /**
@@ -116,25 +102,18 @@ class Ridge(val alpha: Double, val washout: Int = 100) extends Optimizer[FullDat
  * a `BatchedDataset` to stream chunks of data through the network.
  * * @param lr           The learning rate dictating the step size for weight updates.
  * @param alpha        The L2 regularization penalty applied to the gradients.
- * @param beta         The momentum term
- * @param totalWashout The total number of initial time steps to discard across the incoming stream 
- * to bypass the reservoir's transient warmup phase.
- * 
- * Theoretically the learning rate lies somewhere between 0.0 and 1.0. In practice, the learning rate should be set 
- * to a small value, typically less than 0.1. If a large value (~0.4) is specified then if a sufficient number 
- * of epochs is specified, the step updates will keep overshooting the minimum eventually causing the gradients to 
- * explode. 
- * 
- * The step function is a pass through the entire dataset, in machine learning terminology an epoch.
- * 
+ * @param beta         The momentum term.
+ * @param totalWashout The total number of initial time steps to discard across the incoming stream.
  */
 class GradientDescent(lr: Double, alpha: Double, val beta: Double = 0.9, val totalWashout: Int = 0) extends Optimizer[BatchedDataset]:
 
-    override def step[M <: Model[?, ?, ?, ?]](model: M, dataset: BatchedDataset, refOpt:Option[Ref[Int]]): ZIO[Any, Nothing, M] = for {
-        cascade    <- ZIO.succeed(model.getCascade)
-        
-        // Stateful reference to track how much of the washout requirement has been satisfied across batches
-        washoutRef  = refOpt.get
+    private def performEpoch[M <: Model[?, ?, ?, ?]](
+        model: M, 
+        dataset: BatchedDataset, 
+        washoutRef: Ref[Int], 
+        velocityRef: Ref[Option[DenseMatrix[Double]]]
+    ): ZIO[Any, Nothing, M] = for {
+        cascade <- ZIO.succeed(model.getCascade)
         
         _ <- dataset.stream().runForeach {
             case Batch.Labeled(x, y) => 
@@ -143,53 +122,60 @@ class GradientDescent(lr: Double, alpha: Double, val beta: Double = 0.9, val tot
                     
                     _ <- ZIO.succeed {
                         // Continuously update the final row seed so the model is ready for generative forecasting
-                        if x.rows > 0 then
+                        if (x.rows > 0) {
                             val lastRow = x(x.rows - 1, ::).t.toDenseMatrix
                             model.setSeed(lastRow)
+                        }
                     }
                     
-                    _ <- ZIO.succeed {
-                        cascade.foreach {
-                            case Sequential(layerA, readout: Readout[?,?]) =>
-                                val zStates = layerA.forward(Batch.Labeled(x, y)) 
-                                
-                                zStates match {
-                                    case Batch.Labeled(z, _) =>
-                                        val rowsToDrop = math.min(currentWashout, z.rows)
+                    _ <- ZIO.foreachDiscard(cascade) {
+                        case Sequential(layerA, readout: Readout[?,?]) =>
+                            val zStates = layerA.forward(Batch.Labeled(x, y)) 
+                            
+                            zStates match {
+                                case Batch.Labeled(z, _) =>
+                                    val rowsToDrop = math.min(currentWashout, z.rows)
+                                    
+                                    // Only apply backprop if there is data left after the washout drop
+                                    if (rowsToDrop < z.rows) {
+                                        val zWashed = z(rowsToDrop until z.rows, ::)
+                                        val yWashed = y(rowsToDrop until y.rows, ::)
                                         
-                                        // Only apply backprop if there is data left after the washout drop
-                                        if rowsToDrop < z.rows then
-                                            val zWashed = z(rowsToDrop until z.rows, ::)
-                                            val yWashed = y(rowsToDrop until y.rows, ::)
-                                            
-                                            val n = zWashed.rows.toDouble
-                                            val zWithBias = DenseMatrix.horzcat(DenseMatrix.ones[Double](zWashed.rows, 1), zWashed)
-                                            
-                                            // Forward pass: yHat = Z * W^T
-                                            val yhat = zWithBias * readout.w.t
-                                            val error = yhat - yWashed
-                                            
-                                            // Compute Base Gradients
-                                            val baseGrad = (error.t * zWithBias) * (1.0 / n)
- 
-                                            // Compute Regularization Gradients (excluding the bias term)
-                                            val regGrad = readout.w * alpha
-                                            regGrad(::, 0) := 0.0 
-                                            
-                                            // Apply update rule: W = W - lr * (Grad + RegGrad)
-                                            val grad = baseGrad + regGrad
+                                        val n = zWashed.rows.toDouble
+                                        val zWithBias = DenseMatrix.horzcat(DenseMatrix.ones[Double](zWashed.rows, 1), zWashed)
+                                        
+                                        // Forward pass: yHat = Z * W^T
+                                        val yhat = zWithBias * readout.w.t
+                                        val error = yhat - yWashed
+                                        
+                                        // Compute Base Gradients
+                                        val baseGrad = (error.t * zWithBias) * (1.0 / n)
+                                        
+                                        // Compute Regularization Gradients (excluding the bias term)
+                                        val regGrad = readout.w * alpha
+                                        regGrad(::, 0) := 0.0 
+                                        
+                                        // Apply update rule
+                                        val grad = baseGrad + regGrad
 
-                                            // Gradient clipping
-                                            val clippedGrad = grad.map(g => math.max(-1.0, math.min(1.0, g)))
+                                        // Gradient clipping
+                                        val clippedGrad = grad.map(g => math.max(-1.0, math.min(1.0, g)))
 
-
-
-                                            readout.w :-= (clippedGrad * lr)
+                                        // Momentum & Weight Update (Properly chained as ZIO effects)
+                                        for {
+                                            vOpt <- velocityRef.get
+                                            v = vOpt.getOrElse(DenseMatrix.zeros[Double](clippedGrad.rows, clippedGrad.cols))
+                                            newV = (v * beta) + (clippedGrad * lr)
                                             
-                                    case Batch.Unlabeled(_) => ()
-                                }
-                            case _ => ()
-                        }
+                                            _ <- ZIO.succeed(readout.w :-= newV)
+                                            _ <- velocityRef.set(Some(newV))
+                                        } yield ()
+                                    } else {
+                                        ZIO.unit
+                                    }
+                                case Batch.Unlabeled(_) => ZIO.unit
+                            }
+                        case _ => ZIO.unit
                     }
                     
                     // Decrement the remaining washout counter
@@ -201,26 +187,16 @@ class GradientDescent(lr: Double, alpha: Double, val beta: Double = 0.9, val tot
         }
     } yield model
     
-    override def step[M <: Model[?, ?, ?, ?]](model: M, refOpt:Option[Ref[Int]]): ZIO[BatchedDataset, Nothing, M] = for {
-        dataset      <- ZIO.service[BatchedDataset]
-        trainedModel <- step(model, dataset, refOpt)
-    } yield trainedModel
-
-    /**
-     * Executes the streaming training loop for a specified number of epochs (nIter).
-     */
-    override def fit[M <: Model[?, ?, ?, ?]](model: M, nIter: Int, dataset: BatchedDataset): ZIO[Any, Nothing, M] = 
-        for {
-            washoutRef <- Ref.make(totalWashout)
-            //velocityRef <- Ref.make[Option[DenseMatrix[Double]]](None)
-            model <- ZStream.fromIterable(0 until nIter).runFoldZIO(model){ case (m, _) => step(m, dataset, Some(washoutRef)) }
-        } yield model
-
     /**
      * Executes the streaming training loop using the dataset provided by the ZIO environment.
      */
     override def fit[M <: Model[?, ?, ?, ?]](model: M, nIter: Int): ZIO[BatchedDataset, Nothing, M] = for {
-        washoutRef <- Ref.make(totalWashout)
-        model <- ZStream.fromIterable(0 until nIter).runFoldZIO(model){ case (m, _) => step(m, Some(washoutRef)) } 
-    } yield model
+        dataset     <- ZIO.service[BatchedDataset]
         
+        washoutRef  <- Ref.make(totalWashout)
+        velocityRef <- Ref.make[Option[DenseMatrix[Double]]](None)
+        
+        finalModel  <- ZStream.fromIterable(0 until nIter).runFoldZIO(model) { case (m, _) => 
+                           performEpoch(m, dataset, washoutRef, velocityRef) 
+                       }
+    } yield finalModel

@@ -190,7 +190,6 @@ object SkipESN:
 
     type Graph[In <: Int, Res <: Int, Out <: Int] = 
         Sequential[In, In TypeAdd Res, Out, Concat[In, In, Res, Identity[In], Sequential[In, Res, Res, Input[In, Res], Reservoir[Res]]], Readout[In TypeAdd Res, Out]]
-        //Sequential[Int, In TypeAdd Res, Out, Concat[Int, In, Res, Identity[In], Sequential[In, Res, Res, Input[In, Res], Reservoir[Res]]], Readout[In TypeAdd Res, Out]]
 
     def build[In <: Int, Res <: Int, Out <: Int](using ValueOf[In], ValueOf[Res], ValueOf[Out]) = 
         given ValueOf[In TypeAdd Res] = new ValueOf[In TypeAdd Res](
@@ -261,13 +260,13 @@ object DeepESN:
 
 object NetworkPipeline:
 
-    def trainAndDeploy[Out <: Int : Tag, D <: Dataset : Tag]: ZIO[MinMaxScaler & D & Network[Out] & Optimizer[D], Nothing, Network[Out]] = for {
+    def trainAndDeploy[Out <: Int : Tag, D <: Dataset : Tag](nIter:Int=1): ZIO[MinMaxScaler & D & Network[Out] & Optimizer[D], Nothing, Network[Out]] = for {
         scaler    <- ZIO.service[MinMaxScaler]
         dataset   <- ZIO.service[D]
         optimizer <- ZIO.service[Optimizer[D]]
         network <- ZIO.service[Network[Out]]
         _         <- ZIO.logInfo(s"Initiating Network Training...")
-        _         <- network.fit(optimizer, dataset, nIter = 1)
+        _         <- network.fit(optimizer, dataset, nIter = nIter)
         _         <- ZIO.logInfo(s"Training Complete. Network ready for inference.")
 
     } yield network 

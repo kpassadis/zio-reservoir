@@ -333,7 +333,7 @@ val sgdOptimizer = GradientDescent(
     lr = 0.01, 
     alpha = 0.001, 
     totalWashout = 100, 
-    beta = 0.9 // Momentum
+    beta = 0.9 
 )
 
 for {
@@ -353,4 +353,10 @@ for {
 
     [x] Continuous Stateful Stream Optimizers (SGD + Momentum + Clipping)
 
-    [ ] ZIO-Json Model Serialization & Deserialization (In Progress)
+    [ ] Tuning of Hyperparameters with various methodologies (Metropolis Hastings, Bayesian optimization, Random Sampling)
+
+    [ ] Support of classification (only regression is currently supported)
+
+    [ ] Model Serialization & Deserialization 
+
+    [ ] Better integration to ZIO ecosystem

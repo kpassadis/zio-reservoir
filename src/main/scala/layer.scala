@@ -535,7 +535,7 @@ sealed trait Model[In <: Int, Out <: Int, A <: Layer[?, ?], B <: Layer[?, ?]] ex
             case _ =>  None
         }.filter(_.isDefined).map(_.get) 
 
-    //Generative mode: works only for univariate time series
+    //Generative mode: currently works only for univariate time series
     def forecast(steps: Int): Batch.Unlabeled =
         val seed = finalTrainingInput.getOrElse(
             throw new IllegalStateException("Cannot forecast: Model has not been trained yet, or no training seed was captured.")
