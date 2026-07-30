@@ -52,7 +52,9 @@ $$\min_{W_{out}} \|X_{train}W_{out} - y_{train}\|_2^2 + \alpha\|W_{out}\|_2^2$$
 This formulation yields a unique, analytically perfect closed-form derivative known as the normal equation:
 $$W_{out} = (X_{train}^T X_{train} + \alpha I)^{-1} X_{train}^T y_{train}$$
 
-Where:$X_{train}$ is the matrix containing the captured high-dimensional reservoir states across the training timeline.
+Where:
+
+$X_{train}$ is the matrix containing the captured high-dimensional reservoir states across the training timeline.
 $y_{train}$ is the vector of true target values.
 $\alpha$ is the regularization hyperparameter that penalizes extreme weights. 
 $I$ is the identity matrix. 
