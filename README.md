@@ -45,19 +45,7 @@ Where $\lambda_1, \lambda_2, \dots, \lambda_n$ are the eigenvalues of $W_{res}$.
 
 Once the reservoir weights have been initialized they remain fixed. This means that to train the model it is only required to train a linear layer. This has tremendous advantages: it is very fast to train, can easily be used for classification or regression and we can even take advantage of the linear readout layer, for instance calculating statistical measures and prediction intervals.
 
-we can solve for the optimal output weights ($W_{out}$) globally and directly in a single step using Ridge Regression (also known as Tikhonov regularization).The optimization objective minimizes both the squared prediction errors and a penalty on the magnitude of the readout weights to prevent overfitting:
-
-$$\min_{W_{out}} \|X_{train}W_{out} - y_{train}\|_2^2 + \alpha\|W_{out}\|_2^2$$
-
-This formulation yields a unique, analytically perfect closed-form derivative known as the normal equation:
-$$W_{out} = (X_{train}^T X_{train} + \alpha I)^{-1} X_{train}^T y_{train}$$
-
-Where: $X_{train}$ is the matrix containing the captured high-dimensional reservoir states across the training timeline.
-$y_{train}$ is the vector of true target values.
-$\alpha$ is the regularization hyperparameter that penalizes extreme weights. 
-$I$ is the identity matrix. 
-
-In practical engineering applications, we skip computing the explicit matrix inverse ($(X_{train}^T X_{train} + \alpha I)^{-1}$), as it is prone to numerical instability when reservoir states are highly correlated. Instead, we use highly optimized linear solvers leveraging Cholesky or LU decomposition to find $W_{out}$ efficiently and stably.
+we can solve for the optimal output weights ($W_{out}$) globally and directly in a single step using Ridge Regression (also known as Tikhonov regularization).The optimization objective minimizes both the squared prediction errors and a penalty on the magnitude of the readout weights to prevent overfitting:$$\min_{W_{out}} \|X_{train}W_{out} - y_{train}\|_2^2 + \alpha\|W_{out}\|_2^2$$This formulation yields a unique, analytically perfect closed-form derivative known as the normal equation:$$W_{out} = (X_{train}^T X_{train} + \alpha I)^{-1} X_{train}^T y_{train}$$Where:$X_{train}$ is the matrix containing the captured high-dimensional reservoir states across the training timeline.$y_{train}$ is the vector of true target values.$\alpha$ is the regularization hyperparameter that penalizes extreme weights. $I$ is the identity matrix. In practical engineering applications, we skip computing the explicit matrix inverse ($(X_{train}^T X_{train} + \alpha I)^{-1}$), as it is prone to numerical instability when reservoir states are highly correlated. Instead, we use highly optimized linear solvers leveraging Cholesky or LU decomposition to find $W_{out}$ efficiently and stably.
 
 By anchoring the output to a regularized linear model, an Echo State Network inherits the transparent properties of classical statistics:
 - Instant Training and Re-training: There are no learning rates to tune or local minima to get trapped in. Training completes practically instantaneously—even for thousands of reservoir neurons—making it ideal for streaming data environments.
@@ -83,6 +71,52 @@ There are two options for optimizing the weights of the readout layers: a closed
 
 [ x ] Optimize using Closed form solution (Ridge) or Iteratively (Gradient Descent).
 
+## The Hyperparameter tuner
+
+The library offers the functionality to automatically tune the model hyper parameters. In the current setup it is possible to identify three classes of hyperparameters:
+
+1. Reservoir Dynamics & Initialization
+
+- <i> Reservoir size (100 to 5000)  </i>: the number of neurons in the reservoir; defines the capacity of the reservoir. The reservoir is a high-dimensional space, and from the point of view of the readout layer it is a feature space. The larger the size of the reservoir, the larger the feature space. 
+- <i> Spectral Radius ($\rho$) [0.5, 1.25] </i>: Values smaller than 1.0 guarantee the Echo State Property. Howver, modern research shows that pushing the values above 1.0 comnbined with very low leak rate can yield good performance.
+- <i> Leaking Rate ($\gamma$) [0.01, 1.0] </i>: it dictates how much attention is paid to "old" compared to "new", the temporal memory of the reservoir. A value equal to 1.0 means we only care about recent patterns and pay no attention to the past. A low value (e.g. 0.05) means that reactions to new stimuli is sluggish, the model has a long temporal memory. It all depends on the process being modelled. If you are trying to capture long term trends then long term memory is desirable.
+- <i> Input Scaling [0.01, 10.0] </i>: the scale is applied to the pre activation before it is passed through the tanh (the activation function). If the scale the reservoir will operate in the linear part of the tanh function. Larger values push the operational points to the non-linear regime, the curved parts of the tanh function.
+- <i> Density [0.01, 0.2] <i>: Means that a very small percentage of the reservoir matrix is non-zero. It is common practice to hard code this value to 0.1 and don't bother optimizing it.
+
+2. The Optimizer & the training loop
+
+3. The 
+
+> [!NOTE]
+> **Know your hyperparameters**: the hyperparameters are rarely independent. The diagram below provides a summary of the hyper parameter inter dependencies. 
+```mermaid
+graph TD
+    subgraph Core_Dynamics ["1. Reservoir Dynamics (The Chaotic Core)"]
+        RHO["Spectral Radius (ρ)<br/>[0.5 to 1.25]"]:::param
+        GAMMA["Leaking Rate (γ)<br/>[0.01 to 1.0]"]:::param
+        IN_SCALE["Input Scaling<br/>[0.01 to 10.0]"]:::param
+        SIZE["Reservoir Size (N)<br/>[100 to 5000]"]:::param
+    end
+
+    subgraph Readout_Optimizer ["2. Readout Optimizer"]
+        RIDGE["Ridge Penalty (α)<br/>[1e-8 to 1e-1]"]:::optParam
+        WASHOUT["Washout Time<br/>[100 to 1000]"]:::optParam
+    end
+
+    %% Critical Stability Balances
+    RHO <==>|"The Stability Balance:<br/>High ρ (>1.0) REQUIRES low γ<br/>to prevent mathematical explosions"| GAMMA
+    IN_SCALE <==>|"The Signal Balance:<br/>High input scaling overrides<br/>internal recurrent memory (ρ)"| RHO
+
+    %% Overfitting & Capacity Effects
+    SIZE ==>|"The Capacity Trap:<br/>Massive N causes overfitting,<br/>requiring stronger α penalty"| RIDGE
+    RHO -.->|"Collinearity:<br/>High memory creates correlated<br/>states, requiring higher α"| RIDGE
+    
+    %% Temporal Effects
+    GAMMA -.->|"Temporal Reach:<br/>Lower γ (slower updates) needs<br/>longer Washout time"| WASHOUT
+
+    classDef param fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#000;
+    classDef optParam fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000;
+```
 
 ## Reservoir computing use cases
 
